@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+. colors
+ONLY_AMD=0
+ONLY_NVIDIA=0
+SWITCH_GIVER=0
+VERBOSE=0
+echo "
+Miner arguments:                          
+
+$@"
+
+while [ -n "$1" ]; do
+	option=$1
+	
+	if [[ $option == '-u' ]]; then
+		shift
+		wallet=$1
+	elif [[ $option == '-o' ]]; then
+		shift
+		giver=$1
+	elif [[ $option == '-v' ]]; then
+		VERBOSE=1
+	elif [[ $option == '--amd' ]]; then
+		echo "Option: only AMD"
+		ONLY_AMD=1
+	elif [[ $option == '--nvidia' ]]; then
+		echo "Option: only Nvidia"
+		ONLY_NVIDIA=1
+	elif [[ $option == '--switch' ]]; then
+		echo "Option: switch giver automatically"
+		SWITCH_GIVER=1
+	fi
+
+	shift
+done
+sleep 3
+
+absFilename=`readlink -e "$0"`
+mainDir=`dirname "$absFilename"`
+[[ `lsb_release -d --short | grep -c '20.04'` -gt 0 ]] && dir="$mainDir/20.04" || dir="$mainDir/18.04"
+
+echo "Wallet $wallet"
+echo "Giver $giver"
+list=`cat /run/dog/gpuStats | jq '[.gpu[] | select(.brand != "I")]'`
+gpuCount=`echo $list | jq '[.[] | select(.brand != "I")] | length'`
+[[ $gpuCount -eq 0 ]] && echo -e "${RED}No available GPU${WHITE}" && exit 1
+
+echo -e "${BROWN}> Tonminer starting${WHITE} "
+
+firstTimeTrigger=1
+firstGpu=`echo $list | jq ".[0]"`
+firstGpuBrand=`echo $firstGpu | jq -r ".brand"`
+if [[ $firstGpuBrand == "N" ]]; then
+	amdPlatform=" 1"
+else
+	nvidiaPlatform=" 1"
+fi
+
+while true; do
+	if [[ $SWITCH_GIVER -eq 1 && iteration -eq 0 ]]; then
+		giverObj=`curl -s https://ton.org/miningdt/ | jq '.hashrates'`
+		giverKeys=`echo $giverObj | jq 'keys'`
+		length=`echo $giverKeys | jq 'length'`
+
+		for ((i=0; i < $length; i++)); do
+		  locGiver=`echo $giverKeys | jq -r .[$i]`
+		  hr=`echo $giverObj | jq ".\"$locGiver\""`
+		  if [[ ! $minHr|| `echo "${hr} < ${minHr}" | bc -l` -eq 1 ]]; then
+			minHr=$hr
+			minI=$i
+		  fi
+		done
+		newGiver=`echo $giverKeys | jq -r .[$minI]`
+		echo -en "${BROWN}Most profitable giver: $newGiver ($minHr)${WHITE}"
+		if [[ $newGiver != $giver ]]; then
+			echo -e " ${GREEN}-> switching${WHITE}"
+			giver=$newGiver 
+			giverTrigger=1
+		else
+			echo -e " ${GREEN}[OK]${WHITE}"
+		fi
+		iteration=30
+	fi
+
+	nvidiaCount=0
+	amdCount=0
+
+	for ((i=0; i < $gpuCount; i++)); do
+		gpu=`echo $list | jq ".[$i]"`
+		brand=`echo $gpu | jq -r ".brand"`
+		b=`echo $gpu | jq -r ".b"`
+		if [[ $brand == "N" && $ONLY_AMD -eq 1 ]]; then
+			:
+		elif [[ $brand == "A" && $ONLY_NVIDIA -eq 1 ]]; then
+			:
+		else
+			log="/dog/log/tonminer.$b.log"
+			if [[ -f $log ]]; then
+				lastUpdate=`stat -c %Y $log`
+				buffer=`tail -c $(( 10 * 1024 * 1024 )) $log`
+				echo -e "$buffer" > $log
+			else
+				lastUpdate=0
+			fi
+			now=`date +%s`
+			refresh=$(($now - $lastUpdate))
+			if [[ $refresh -gt 20 || $firstTimeTrigger -eq 1 || $giverTrigger -eq 1 ]]; then
+				if [[ $brand == "N" && $ONLY_AMD -ne 1 ]]; then
+					if [[ $firstTimeTrigger -eq 1 ]]; then
+						echo -e "${GREEN}[`date +"%d.%m %T"`] > GPU $i: Start miner for Nvidia${WHITE}"
+					else
+						echo -e "${RED}[`date +"%d.%m %T"`] > GPU $i: Miner is idle, restart miner for Nvidia${WHITE}"
+						pid=`lsof -t $log`
+						[[ ! -z $pid ]] && kill -9 "$pid"
+						sleep 0.2
+					fi
+					[[ $VERBOSE -eq 1 ]] && echo "$dir/tonlib-cuda-cli -c global.config.json -e \"pminer start $giver $wallet ${nvidiaCount}${nvidiaPlatform}\" -l /dog/log/tonminer.$b.log &"
+					$dir/tonlib-cuda-cli -c global.config.json -e "pminer start $giver $wallet ${nvidiaCount}${nvidiaPlatform}" -l /dog/log/tonminer.$b.log &
+					
+				elif [[ $ONLY_NVIDIA -ne 1 ]]; then
+					if [[ $firstTimeTrigger -eq 1 ]]; then
+						echo -e "${GREEN}[`date +"%d.%m %T"`] > GPU $i: Start miner for AMD${WHITE}"
+					else
+						echo -e "${RED}[`date +"%d.%m %T"`] > GPU $i: Miner is idle, restart miner for AMD${WHITE}"
+						pid=`lsof -t $log`
+						[[ ! -z $pid ]] && kill -9 "$pid"
+						sleep 0.2
+					fi
+					[[ $VERBOSE -eq 1 ]] && echo "$dir/tonlib-opencl-cli -c global.config.json -e \"pminer start $giver $wallet ${amdCount}${amdPlatform}\" -l /dog/log/tonminer.$b.log &"
+					$dir/tonlib-opencl-cli -c global.config.json -e "pminer start $giver $wallet ${amdCount}${amdPlatform}" -l /dog/log/tonminer.$b.log &
+					
+				fi
+			else
+				echo -e "${CYAN}[`date +"%d.%m %T"`] > GPU $i: Miner is active${WHITE}"
+			fi
+			if [[ $brand == "N" ]]; then
+				((nvidiaCount++))
+			else
+				((amdCount++))
+			fi
+		fi
+	done
+	firstTimeTrigger=0
+	giverTrigger=0
+	((iteration--))
+	sleep 20
+done
