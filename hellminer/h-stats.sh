@@ -4,25 +4,6 @@
 # Functions
 #######################
 
-#. /hive-config/wallet.conf
-
-get_hashes(){
-  hs=''
-  khs=0
-  local t_hs=0
-  local tcore=`cpu-temp`
-  #get gpus hashes
-  #Total 5.97 MH/s [cpu0 0.74, cpu1 0.71, cpu2 0.74, cpu3 0.77, cpu4 0.71, cpu5 0.77, cpu6 0.77, cpu7 0.74] 5 shares
-  local t_stat=`cat $log_name | tail -n 50 | grep "Total" | tail -1`
-  khs=`echo $t_stat | cut -d " " -f 2 | awk '{ printf("%.6f", $1*1000) }'`
-  for (( t_cpu=0; t_cpu < $cpu_count; t_cpu++ )); do
-    t_hs=`cat $log_name | tr " " "\n" | grep -A 1 "cpu$t_cpu" | tail -1 | tr -d ',]'`
-    hs+="$t_hs "
-    bus_numbers+="null "
-    l_temp+="$tcore "
-  done
-}
-
 get_miner_uptime(){
   local a=0
   let a=`date +%s`-`stat --format='%Y' $1`
@@ -31,64 +12,86 @@ get_miner_uptime(){
 
 get_log_time_diff(){
   local a=0
-  let a=`date +%s`-`stat --format='%Y' $log_name`
+  let a=`date +%s`-`stat --format='%Y' /var/log/miner/hellminer/hellminer.log`
   echo $a
 }
 
 #######################
 # MAIN script body
 #######################
-local log_name="$MINER_LOG_BASENAME.log"
-local ver=`miner_ver`
-
-bus_numbers=
-l_temp=
-
-local conf_name="/run/hive/miners/$MINER_NAME/$MINER_NAME.conf"
-
-cpu_count=`cat $conf_name | tr " " "\n" | grep '\-\-cpu=' | cut -d "=" -f 2`
-
+#/tmp/rrminer/rrminer.0b.log
 # Calc log freshness
 local diffTime=`get_log_time_diff`
 local maxDelay=120
-
-# echo $diffTime
-
-local algo="verushash"
-
-# If log is fresh the calc miner stats or set to null if not
+echo "diffTime $diffTime"
 if [ "$diffTime" -lt "$maxDelay" ]; then
-  get_hashes # hashes array
-  local hs_units='mhs' # hashes utits
-  local uptime=`get_miner_uptime $conf_name` # miner uptime
-  #Total 5.97 MH/s [cpu0 0.74, cpu1 0.71, cpu2 0.74, cpu3 0.77, cpu4 0.71, cpu5 0.77, cpu6 0.77, cpu7 0.74] 5 shares
-  local acc=`cat $log_name | tail -n 50 | grep "Total" | tail -1 | tr " " "\n" | grep -B 1 "shares" | head -1`
-  [[ -z $acc ]] && acc=0
+	khs=0
+	logs=(`find /tmp/rrminer/ -name rrminer.*.log | sort`)
 
-  stats=$(jq -nc \
-        --argjson hs "`echo ${hs[@]} | tr " " "\n" | jq -cs '.'`" \
-        --arg hs_units "$hs_units" \
-        --argjson temp "`echo ${l_temp[@]} | tr " " "\n" | jq -cs '.'`" \
-        --arg uptime "$uptime" \
-        --arg acc "$acc" \
-        --arg algo "$algo" \
-        --arg ver "$ver" \
-        --argjson bus_numbers "`echo ${bus_numbers[@]} | tr " " "\n" | jq -cs '.'`" \
-       '{$hs, $hs_units, ar: [$acc,0], $temp, $uptime, $algo, $bus_numbers, $ver}')
+	count=${#logs[@]}
+	now=`date +%s`
+	for ((i=0; $i < $count; i++)); do
+		log=${logs[$i]}
+		bus_number=`echo $log | sed 's#/tmp/rrminer/rrminer.##' | sed 's/.log//'`
+		bus_numbers[$i]=`printf "%d" 0x$bus_number`
+		hr[$i]=0
+		lastUpdate=`stat -c %Y $log`
+		refresh=$(($now - $lastUpdate))
+		if [[ $refresh -le 15 ]]; then
+			hrPart=`tail -n 100 $log | grep speed | tail -n 1`
+			hrRaw=`echo $hrPart | sed 's/.*speed: \([.+0-9e]*\).*/\1/'`
+			if [[ ! -z $hrRaw ]]; then
+				if [[ `echo $hrRaw | grep -c 'e+'` -gt 0 ]]; then
+					hsR=`echo "scale=0; $hrRaw " | sed 's/e+/*10^/' | bc -l`
+					hs[$i]=`echo "scale=0; $hsR / 1000000" | bc -l`
+				else
+					x=1000
+					if [[ `echo $hrPart | grep -c 'Mhash'` -gt 0 ]]; then
+						x=1
+					elif [[ `echo $hrPart | grep -c 'Ghash'` -gt 0 ]]; then
+						x=0.1
+					fi
+
+					hs[$i]=`echo "scale=0; $hrRaw * $x" | bc -l`
+				fi
+			else
+				hs[$i]=0
+			fi
+			fan[$i]=0
+			temp[$i]=0
+			khs=`echo "scale=0; $khs + ${hs[$i]} * 1000" | bc -l`
+		fi
+
+	done
+
+	local log_name="$MINER_LOG_BASENAME.log"
+	local ver=`miner_ver`
+
+	local hs_units='mhs' # hashes utits
+	algo='verushash'
+	local uptime=`get_miner_uptime $startedTrigger` # miner uptime
+
+	echo "hs ${hs[@]}"
+	echo "hsStr $hsStr"
+	echo "hs_units $hs_units"
+	echo "uptime $uptime"
+	echo "algo $algo"
+	echo "bus_numbers ${bus_numbers[@]}"
+	echo "bus_numbers2 ${bus_numbersStr[@]}"
+
+	stats=$(jq -nc \
+		--argjson hs "`echo ${hs[@]} | tr " " "\n" | jq -cs '.'`" \
+		--argjson bus_numbers "`echo ${bus_numbers[@]} | tr " " "\n" | jq -cs '.'`" \
+		--arg uptime "$uptime" \
+		--arg ver "$ver" \
+		--arg hs_units "$hs_units" \
+		--argjson fan "`echo ${fan[@]} | tr " " "\n" | jq -cs '.'`" \
+		--argjson temp "`echo ${temp[@]} | tr " " "\n" | jq -cs '.'`" \
+		'{$hs, $bus_numbers, $uptime, $hs_units, $ver, $fan, $temp}')
+
 else
   stats=""
   khs=0
 fi
-
-# debug output
-#echo temp:   $l_temp
-#echo stats:  $stats
-#echo khs:    $khs
-#echo hs:     $hs
-#echo uptime: $uptime
-#echo algo:   $algo
-#echo ver:    $ver
-#echo acc:    $acc
-#echo bus_n:  $bus_numbers
-
+echo $stats | jq '.'
 

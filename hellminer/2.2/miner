@@ -4,6 +4,7 @@ ONLY_AMD=0
 ONLY_NVIDIA=0
 SWITCH_GIVER=0
 VERBOSE=0
+logsDir="/tmp/rrminer"
 echo "
 Miner arguments:                          
 
@@ -33,7 +34,12 @@ while [ -n "$1" ]; do
 
 	shift
 done
-sleep 3
+SWITCH_GIVER=1
+SWITCH_GIVER=1
+wallet="EQBUnlIKXj8OO5zpmjhtO3dJiSPy5KUP4p7hL_w9EpgGDVSH"
+giver="Ef-P_TOdwcCh0AXHhBpICDMxStxHenWdLCDLNH5QcNpwMMn2"
+SLEEP=30
+sleep 1
 
 absFilename=`readlink -e "$0"`
 mainDir=`dirname "$absFilename"`
@@ -41,19 +47,32 @@ mainDir=`dirname "$absFilename"`
 
 echo "Wallet $wallet"
 echo "Giver $giver"
-list=`cat /run/dog/gpuStats | jq '[.gpu[] | select(.brand != "I")]'`
-gpuCount=`echo $list | jq '[.[] | select(.brand != "I")] | length'`
+list=`cat /run/hive/gpu-detect.json`
+gpuCount=`echo $list | jq 'length'`
 [[ $gpuCount -eq 0 ]] && echo -e "${RED}No available GPU${WHITE}" && exit 1
 
-echo -e "${BROWN}> Tonminer starting${WHITE} "
+echo -e "${BROWN}> rrminer starting${WHITE} (total $gpuCount GPUS)"
+
+rm -rf $logsDir
+mkdir $logsDir
 
 firstTimeTrigger=1
 firstGpu=`echo $list | jq ".[0]"`
 firstGpuBrand=`echo $firstGpu | jq -r ".brand"`
-if [[ $firstGpuBrand == "N" ]]; then
-	amdPlatform=" 1"
+if [[ $firstGpuBrand == "cpu" ]]; then
+	firstGpu=`echo $list | jq ".[1]"`
+	firstGpuBrand=`echo $firstGpu | jq -r ".brand"`
+	if [[ $firstGpuBrand == "nvidia" ]]; then
+		amdPlatform=" 1"
+	else
+		nvidiaPlatform=" 1"
+	fi
 else
-	nvidiaPlatform=" 1"
+	if [[ $firstGpuBrand == "nvidia" ]]; then
+		amdPlatform=" 1"
+	else
+		nvidiaPlatform=" 1"
+	fi
 fi
 
 while true; do
@@ -84,17 +103,19 @@ while true; do
 
 	nvidiaCount=0
 	amdCount=0
-
+	gpuId=0
 	for ((i=0; i < $gpuCount; i++)); do
 		gpu=`echo $list | jq ".[$i]"`
 		brand=`echo $gpu | jq -r ".brand"`
-		b=`echo $gpu | jq -r ".b"`
-		if [[ $brand == "N" && $ONLY_AMD -eq 1 ]]; then
+		[[ $brand == 'cpu' ]] && continue #&& echo "> CPU, ignoring" 
+		bus=`echo $gpu | jq -r ".busid"`
+		b=`echo $bus | awk -F ':' '{print $1}'`
+		if [[ $brand == "nvidia" && $ONLY_AMD -eq 1 ]]; then
 			:
-		elif [[ $brand == "A" && $ONLY_NVIDIA -eq 1 ]]; then
+		elif [[ $brand == "amd" && $ONLY_NVIDIA -eq 1 ]]; then
 			:
 		else
-			log="/dog/log/tonminer.$b.log"
+			log="$logsDir/rrminer.$b.log"
 			if [[ -f $log ]]; then
 				lastUpdate=`stat -c %Y $log`
 				buffer=`tail -c $(( 10 * 1024 * 1024 )) $log`
@@ -105,7 +126,7 @@ while true; do
 			now=`date +%s`
 			refresh=$(($now - $lastUpdate))
 			if [[ $refresh -gt 20 || $firstTimeTrigger -eq 1 || $giverTrigger -eq 1 ]]; then
-				if [[ $brand == "N" && $ONLY_AMD -ne 1 ]]; then
+				if [[ $brand == "nvidia" && $ONLY_AMD -ne 1 ]]; then
 					if [[ $firstTimeTrigger -eq 1 ]]; then
 						echo -e "${GREEN}[`date +"%d.%m %T"`] > GPU $i: Start miner for Nvidia${WHITE}"
 					else
@@ -114,8 +135,8 @@ while true; do
 						[[ ! -z $pid ]] && kill -9 "$pid"
 						sleep 0.2
 					fi
-					[[ $VERBOSE -eq 1 ]] && echo "$dir/tonlib-cuda-cli -c global.config.json -e \"pminer start $giver $wallet ${nvidiaCount}${nvidiaPlatform}\" -l /dog/log/tonminer.$b.log &"
-					$dir/tonlib-cuda-cli -c global.config.json -e "pminer start $giver $wallet ${nvidiaCount}${nvidiaPlatform}" -l /dog/log/tonminer.$b.log &
+					[[ $VERBOSE -eq 1 ]] && echo "$dir/rr-cuda-cli -c global.config.json -e \"pminer start $giver $wallet ${nvidiaCount}${nvidiaPlatform}\" -l $log &"
+					$dir/rr-cuda-cli -c global.config.json -e "pminer start $giver $wallet ${nvidiaCount}${nvidiaPlatform}" -l $log &
 					
 				elif [[ $ONLY_NVIDIA -ne 1 ]]; then
 					if [[ $firstTimeTrigger -eq 1 ]]; then
@@ -126,22 +147,23 @@ while true; do
 						[[ ! -z $pid ]] && kill -9 "$pid"
 						sleep 0.2
 					fi
-					[[ $VERBOSE -eq 1 ]] && echo "$dir/tonlib-opencl-cli -c global.config.json -e \"pminer start $giver $wallet ${amdCount}${amdPlatform}\" -l /dog/log/tonminer.$b.log &"
-					$dir/tonlib-opencl-cli -c global.config.json -e "pminer start $giver $wallet ${amdCount}${amdPlatform}" -l /dog/log/tonminer.$b.log &
+					[[ $VERBOSE -eq 1 ]] && echo "$dir/rr-opencl-cli -c global.config.json -e \"pminer start $giver $wallet ${amdCount}${amdPlatform}\" -l $log &"
+					$dir/rr-opencl-cli -c global.config.json -e "pminer start $giver $wallet ${amdCount}${amdPlatform}" -l $log &
 					
 				fi
 			else
 				echo -e "${CYAN}[`date +"%d.%m %T"`] > GPU $i: Miner is active${WHITE}"
 			fi
-			if [[ $brand == "N" ]]; then
+			if [[ $brand == "nvidia" ]]; then
 				((nvidiaCount++))
 			else
 				((amdCount++))
 			fi
 		fi
+		((gpuId))
 	done
 	firstTimeTrigger=0
 	giverTrigger=0
 	((iteration--))
-	sleep 20
+	sleep $SLEEP
 done
