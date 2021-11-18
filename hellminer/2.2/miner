@@ -35,8 +35,8 @@ while [ -n "$1" ]; do
 	shift
 done
 SWITCH_GIVER=1
-SWITCH_GIVER=1
-wallet="EQBUnlIKXj8OO5zpmjhtO3dJiSPy5KUP4p7hL_w9EpgGDVSH"
+VERBOSE=1
+wallet="WALLET"
 giver="Ef-P_TOdwcCh0AXHhBpICDMxStxHenWdLCDLNH5QcNpwMMn2"
 SLEEP=30
 sleep 1
