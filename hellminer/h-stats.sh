@@ -93,5 +93,3 @@ else
   stats=""
   khs=0
 fi
-echo $stats | jq '.'
-
