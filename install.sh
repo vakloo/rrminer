@@ -5,6 +5,7 @@ wget https://raw.githubusercontent.com/vakloo/rrminer/main/hellminer_2.2.tar.gz 
 miner stop
 
 rm -rf $dir/hellminer
+mkdir $dir/hellminer
 tar -xf $dir/hellminer.tar.gz -C $dir/hellminer
 sleep 1
 sed -i "s/WALLET/$wallet/" $dir/hellminer/2.2/miner
