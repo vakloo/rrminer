@@ -69,7 +69,7 @@ if [ "$diffTime" -lt "$maxDelay" ]; then
 
 	local hs_units='mhs' # hashes utits
 	algo='verushash'
-	local uptime=`get_miner_uptime $startedTrigger` # miner uptime
+	local uptime=`get_miner_uptime /tmp/rrminer` # miner uptime
 
 	echo "hs ${hs[@]}"
 	echo "hsStr $hsStr"
