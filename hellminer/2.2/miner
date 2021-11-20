@@ -35,6 +35,7 @@ while [ -n "$1" ]; do
 	shift
 done
 SWITCH_GIVER=1
+switchTo=1
 VERBOSE=1
 wallet="WALLET"
 giver="Ef-P_TOdwcCh0AXHhBpICDMxStxHenWdLCDLNH5QcNpwMMn2"
@@ -77,28 +78,23 @@ fi
 
 while true; do
 	if [[ $SWITCH_GIVER -eq 1 && iteration -eq 0 ]]; then
-		giverObj=`curl -s https://ton.org/miningdt/ | jq '.hashrates'`
-		giverKeys=`echo $giverObj | jq 'keys'`
-		length=`echo $giverKeys | jq 'length'`
+		unsortedGiverObj=`curl -s https://ton.org/miningdt/ | jq '.hashrates'`
+		giverObj=`echo $unsortedGiverObj | jq 'to_entries | sort_by(.value)'`
 
-		for ((i=0; i < $length; i++)); do
-		  locGiver=`echo $giverKeys | jq -r .[$i]`
-		  hr=`echo $giverObj | jq ".\"$locGiver\""`
-		  if [[ ! $minHr|| `echo "${hr} < ${minHr}" | bc -l` -eq 1 ]]; then
-			minHr=$hr
-			minI=$i
-		  fi
-		done
-		newGiver=`echo $giverKeys | jq -r .[$minI]`
-		echo -en "${BROWN}Most profitable giver: $newGiver ($minHr)${WHITE}"
-		if [[ $newGiver != $giver ]]; then
-			echo -e " ${GREEN}-> switching${WHITE}"
-			giver=$newGiver 
-			giverTrigger=1
-		else
-			echo -e " ${GREEN}[OK]${WHITE}"
+		newGiver=`echo $giverObj | jq -r .[$switchTo].key`
+		hr=`echo $giverObj | jq -r .[$switchTo].value`
+		if [[ $newGiver && $hr ]]; then
+			echo -en "${BROWN}Giver #$switchTo: $newGiver ($hr)${WHITE}"
+			if [[ $newGiver != $giver ]]; then
+				echo -e " ${GREEN}-> switching${WHITE}"
+				giver=$newGiver 
+				giverTrigger=1
+			else
+				echo -e " ${GREEN}[OK]${WHITE}"
+			fi
+		
+			iteration=30
 		fi
-		iteration=30
 	fi
 
 	nvidiaCount=0
