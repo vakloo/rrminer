@@ -132,7 +132,7 @@ while true; do
 						sleep 0.2
 					fi
 					[[ $VERBOSE -eq 1 ]] && echo "$dir/tonlib-cuda-cli -c global.config.json -e \"pminer start $giver $wallet ${nvidiaCount}${nvidiaPlatform}\" -l $log &"
-					$dir/rr-cuda-cli -c global.config.json -e "pminer start $giver $wallet ${nvidiaCount}${nvidiaPlatform}" -l $log &
+					$dir/tonlib-cuda-cli -c global.config.json -e "pminer start $giver $wallet ${nvidiaCount}${nvidiaPlatform}" -l $log &
 					
 				elif [[ $ONLY_NVIDIA -ne 1 ]]; then
 					if [[ $firstTimeTrigger -eq 1 ]]; then
@@ -144,7 +144,7 @@ while true; do
 						sleep 0.2
 					fi
 					[[ $VERBOSE -eq 1 ]] && echo "$dir/tonlib-opencl-cli -c global.config.json -e \"pminer start $giver $wallet ${amdCount}${amdPlatform}\" -l $log &"
-					$dir/rr-opencl-cli -c global.config.json -e "pminer start $giver $wallet ${amdCount}${amdPlatform}" -l $log &
+					$dir/tonlib-opencl-cli -c global.config.json -e "pminer start $giver $wallet ${amdCount}${amdPlatform}" -l $log &
 					
 				fi
 			else
